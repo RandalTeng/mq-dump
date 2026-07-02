@@ -21,6 +21,9 @@ go.work.sum
 # 依赖(如启用 vendor 可自行取消忽略)
 # /vendor/
 
+# Git worktree(功能开发隔离)
+/.worktrees/
+
 # IDE / 编辑器
 /.idea/
 /.vscode/

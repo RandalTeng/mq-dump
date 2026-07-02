@@ -40,6 +40,24 @@ Example:
 Co-Authored-By: OMP / claude-opus-4-8 <noreply@claude.ai>
 ```
 
+### Feature Work Isolation (MUST)
+
+New features / functionality are implemented in a **git worktree branched off
+`master`**, never directly in the main working tree — existing code stays
+untouched.
+
+1. Branch from `master`; create the worktree under `.worktrees/<branch>` (already
+   gitignored).
+   ```bash
+   git worktree add .worktrees/<feature> -b <feature> master
+   ```
+2. Implement, test, and iterate inside the worktree.
+3. Integrate back only after the developer confirms (merge/PR per the confirmation
+   gates above).
+
+Small doc-only edits and fixes to already-tracked files may stay in the main tree;
+anything that adds or changes feature behavior uses a worktree.
+
 ## Project Overview
 
 `amqp-dump` is a Go CLI tool that **exports** messages from a message broker to a
