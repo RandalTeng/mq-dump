@@ -1,0 +1,37 @@
+# 编译产物
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+amqp-dump
+
+# 测试与覆盖率
+*.test
+*.out
+coverage.*
+/coverage/
+
+# Go 工作区
+go.work
+go.work.sum
+
+# 依赖(如启用 vendor 可自行取消忽略)
+# /vendor/
+
+# IDE / 编辑器
+/.idea/
+/.vscode/
+*.swp
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 环境与本地配置
+.env
+.env.*
+*.local.yaml

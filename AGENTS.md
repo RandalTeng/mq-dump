@@ -19,6 +19,27 @@ Read-only actions (reading files, running tests/build/lint, searching) need no
 confirmation. These gates apply to source code; docs/specs still follow the same
 "confirm before commit" rule.
 
+### Commit Message Convention (MUST)
+
+Before committing, the developer MUST confirm the message. Every commit message is
+written in **Chinese** and follows this exact structure:
+
+1. First line: an imperative sentence summarizing the change. NO `feat`/`fix`/type
+   prefixes.
+2. Blank line, then one bullet per change describing what changed.
+3. Blank line, then a `Co-Authored-By` footer ending with a noreply email.
+
+Example:
+
+```
+补充提交信息规范并要求中文说明
+
+- 在 AGENTS.md 增加提交信息格式约定
+- 明确首行祈使句、逐条说明、署名三段结构
+
+Co-Authored-By: OMP / claude-opus-4-8 <noreply@claude.ai>
+```
+
 ## Project Overview
 
 `amqp-dump` is a Go CLI tool that **exports** messages from a message broker to a
