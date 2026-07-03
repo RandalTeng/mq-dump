@@ -58,6 +58,14 @@ untouched.
 Small doc-only edits and fixes to already-tracked files may stay in the main tree;
 anything that adds or changes feature behavior uses a worktree.
 
+### No Commits Inside Plan Execution (MUST)
+
+Implementation plans and their tasks NEVER contain or perform commit actions. While
+executing any plan, the assistant runs NO `git add` and NO `git commit` — not per
+task, not per phase, not at the end. Implementation and verification are done; the
+developer decides when and what to commit, outside the plan. Do NOT add "commit"
+steps when writing plans, and ignore/skip any that slipped in.
+
 ## Project Overview
 
 `amqp-dump` is a Go CLI tool that **exports** messages from a message broker to a

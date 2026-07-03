@@ -1,6 +1,6 @@
 # amqp-dump 实现计划
 
-> **For agentic workers:** 逐任务实现本计划,每个任务遵循 TDD(先写失败测试 → 跑失败 → 最小实现 → 跑通过 → 提交)。步骤用 `- [ ]` 勾选跟踪。**每次改代码前、每次提交前均需开发人员确认(见 AGENTS.md)。**
+> **For agentic workers:** 逐任务实现本计划,每个任务遵循 TDD(先写失败测试 → 跑失败 → 最小实现 → 跑通过)。步骤用 `- [ ]` 勾选跟踪。**每次改代码前需开发人员确认(见 AGENTS.md)。本计划任务不包含任何提交动作 —— 全程不 `git add`/`git commit`,提交由开发人员在计划外自行决定。**
 
 **Goal:** 实现 amqp-dump —— 一个可插拔驱动的消息队列导入/导出 CLI,v1 支持 AMQP。
 
@@ -13,7 +13,7 @@
 **约定:**
 - 依赖用固定版本(`go get pkg@vX.Y.Z`),不用开放区间。
 - 子代理只实现,不跑项目级 build/lint;由主执行者在阶段末统一验证。
-- 每个任务末尾的提交按 AGENTS.md 中文 commit 规范,且需开发人员确认。
+- 本计划任何任务、任何步骤都不得执行提交动作(不 `git add`、不 `git commit`)。实现与验证完成后,是否提交由开发人员在计划外决定。
 
 ---
 
@@ -59,7 +59,6 @@ linters:
 Run: `go build ./... && go vet ./...`
 Expected: 无包时通过(或 "no Go files" — 属正常,后续任务补齐)。
 
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -128,7 +127,6 @@ type Message struct {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/model/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -209,7 +207,6 @@ func (m Meta) CheckDriver(want string) error {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/dump/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -353,7 +350,6 @@ func (d *Decoder) Read() (model.Message, bool, error) {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/dump/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -427,7 +423,6 @@ func (c Common) Workers() int {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/config/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -506,7 +501,6 @@ func LoadDriverYAML(path string, dst any) error {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/config/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -643,7 +637,6 @@ func Names() []string {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/mq/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -769,7 +762,6 @@ func messageToPublishing(m model.Message) amqp.Publishing {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/mq/amqp/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -875,7 +867,6 @@ func (d *Driver) target(m model.Message) (exchange, key string) {
 注:`Driver` 结构体在 Task 10 定义;本任务先声明其字段 `cfg Config`(实现时把 Driver 结构体与 target 一并落地,或先放最小 `type Driver struct{ cfg Config }`,Task 10 再补全其余字段)。
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/mq/amqp/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -1109,7 +1100,6 @@ func (d *Driver) publish(ch *amqp.Channel, m model.Message) error {
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/mq/amqp/` Expected: PASS(注册 + 模板回环;Export/Import 网络行为留集成测试)。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -1274,7 +1264,6 @@ func Import(ctx context.Context, r io.Reader, driver string, d mq.Driver) error 
 ```
 
 - [ ] **Step 4: 跑通过** — Run: `go test ./internal/pipeline/` Expected: PASS。
-- [ ] **Step 5: 提交**(需开发人员确认 message)
 
 ---
 
@@ -1521,7 +1510,6 @@ func main() {
 Run: `go run ./cmd/amqp-dump init -d amqp` Expected: stdout 打印 AMQP YAML 模板。
 Run: `go run ./cmd/amqp-dump --help` Expected: 显示 export/import/init 三命令与通用 flag(含短 flag)。
 
-- [ ] **Step 6: 提交**(需开发人员确认 message)
 
 ---
 
@@ -1561,7 +1549,6 @@ package amqp
 Run: `docker compose up -d && go test -tags integration ./internal/mq/amqp/ && docker compose down`
 Expected: PASS(需本机 docker)。若环境无 docker,记录为未验证并说明。
 
-- [ ] **Step 4: 提交**(需开发人员确认 message)
 
 ---
 
@@ -1571,7 +1558,8 @@ Expected: PASS(需本机 docker)。若环境无 docker,记录为未验证并说�
 - [ ] **Step 2: 静态检查** — Run: `go vet ./... && gofmt -l .` Expected: 无输出。
 - [ ] **Step 3: golangci** — Run: `golangci-lint run`(若已安装)Expected: 无 issue。
 - [ ] **Step 4: README 快速上手**(可选,若需要)— 记录 init/export/import 用法与 docker-compose。
-- [ ] **Step 5: 完成分支收尾** — 按 finishing-a-development-branch 决定 merge/PR(需开发人员确认)。
+
+> 收尾不做任何提交/合并。全部任务与验证完成后,由开发人员在计划外自行决定 merge/PR 等集成动作。
 
 ## Self-Review 覆盖对照
 
