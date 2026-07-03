@@ -155,6 +155,24 @@ func TestExportRequeue(t *testing.T) {
 	}
 }
 
+// TestExportRequeueCount:requeue + -n N(N=队列深度)。回归 pipeline 写满 -n 后
+// cancel ctx、末条 republish 被打断而假报 "context canceled" 的 bug。exportToBuf
+// 内部对 Export 返回的 err 直接 Fatalf,故导出成功即证明无假报错。
+func TestExportRequeueCount(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	seed(t, ch, queue, 5)
+
+	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Mode: "requeue"}}, config.Common{Count: 5})
+	if got := countMessages(t, b); got != 5 {
+		t.Errorf("exported %d msgs, want 5", got)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := queueLen(t, ch, queue); got != 5 {
+		t.Errorf("queue has %d after requeue+count export, want 5", got)
+	}
+}
+
 // TestExportPeek:peek 只取队头 N 条,非破坏,队列条数不变。
 func TestExportPeek(t *testing.T) {
 	conn, ch, queue := setup(t)

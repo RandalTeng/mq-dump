@@ -190,8 +190,9 @@ func (d *Driver) exportRequeue(ctx context.Context, emit func(model.Message) err
 				_ = dv.Nack(false, true)
 				return err
 			}
-			// 先重发副本回原队并 confirm,成功后再 ack 原件(顺序不可反,防丢)。
-			if err := d.republish(ctx, ch, m); err != nil {
+			// 本条已落盘,重发+ack 必须完成:剥离 ctx 的计数取消(pipeline 写满 -n 后
+			// 会 cancel),否则末条会以 context canceled 假报错;SIGINT 仍在循环顶部生效。
+			if err := d.republish(context.WithoutCancel(ctx), ch, m); err != nil {
 				_ = dv.Nack(false, true)
 				return err
 			}
