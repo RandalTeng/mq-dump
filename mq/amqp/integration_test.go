@@ -1,0 +1,188 @@
+//go:build integration
+
+package amqp
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	rabbit "github.com/rabbitmq/amqp091-go"
+
+	"github.com/RandalTeng/mq-dump/config"
+	"github.com/RandalTeng/mq-dump/internal/dump"
+	"github.com/RandalTeng/mq-dump/internal/pipeline"
+	"github.com/RandalTeng/mq-dump/mq"
+)
+
+// 需真实 RabbitMQ:`docker compose -f deploy/docker-compose.yaml up -d`,再 `go test -tags integration ./mq/amqp/`。
+// 连接串来自 AMQP_URI,缺省 amqp://guest:guest@localhost:5672/。
+
+func uri() string {
+	if v := os.Getenv("AMQP_URI"); v != "" {
+		return v
+	}
+	return "amqp://guest:guest@localhost:5672/"
+}
+
+// setup 建立一条连接与通道,声明一个自动删除的临时队列,返回队列名与清理函数。
+func setup(t *testing.T) (*rabbit.Connection, *rabbit.Channel, string) {
+	t.Helper()
+	conn, err := rabbit.Dial(uri())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		t.Fatalf("channel: %v", err)
+	}
+	q, err := ch.QueueDeclare("", false, true, true, false, nil)
+	if err != nil {
+		t.Fatalf("declare queue: %v", err)
+	}
+	return conn, ch, q.Name
+}
+
+// seed 向默认 exchange 用 routing key = 队列名发布 n 条消息。
+func seed(t *testing.T, ch *rabbit.Channel, queue string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		err := ch.PublishWithContext(context.Background(), "", queue, false, false,
+			rabbit.Publishing{ContentType: "text/plain", Body: []byte{byte('A' + i)}})
+		if err != nil {
+			t.Fatalf("publish seed %d: %v", i, err)
+		}
+	}
+	// 等待消息落入队列
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if queueLen(t, ch, queue) >= n {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func queueLen(t *testing.T, ch *rabbit.Channel, queue string) int {
+	t.Helper()
+	q, err := ch.QueueDeclarePassive(queue, false, true, true, false, nil)
+	if err != nil {
+		t.Fatalf("inspect queue: %v", err)
+	}
+	return q.Messages
+}
+
+func openDriver(t *testing.T, cfg Config, common config.Common) mq.Driver {
+	t.Helper()
+	cfg.Connection.URI = uri()
+	d, err := factory{}.Open(common, &cfg)
+	if err != nil {
+		t.Fatalf("open driver: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+func exportToBuf(t *testing.T, cfg Config, common config.Common) []byte {
+	t.Helper()
+	// 空闲超时确保 Export 在耗尽后返回
+	if common.Timeout == 0 {
+		common.Timeout = 2 * time.Second
+	}
+	d := openDriver(t, cfg, common)
+	var buf bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := pipeline.Export(ctx, &buf, "amqp", common.Count, d); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func countMessages(t *testing.T, b []byte) int {
+	t.Helper()
+	dec := dump.NewDecoder(bytes.NewReader(b))
+	if _, err := dec.ReadMeta(); err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	n := 0
+	for {
+		_, ok, err := dec.Read()
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !ok {
+			return n
+		}
+		n++
+	}
+}
+
+// TestExportNonDestructive:默认 ack=false,导出后消息仍在队列(requeue)。
+func TestExportNonDestructive(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	seed(t, ch, queue, 5)
+
+	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue}}, config.Common{})
+	if got := countMessages(t, b); got != 5 {
+		t.Errorf("exported %d msgs, want 5", got)
+	}
+	// 非破坏:队列仍有 5 条
+	time.Sleep(300 * time.Millisecond)
+	if got := queueLen(t, ch, queue); got != 5 {
+		t.Errorf("queue has %d after non-destructive export, want 5", got)
+	}
+}
+
+// TestExportAckDrain:ack=true,导出后队列被清空。
+func TestExportAckDrain(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	seed(t, ch, queue, 5)
+
+	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Ack: true}}, config.Common{})
+	if got := countMessages(t, b); got != 5 {
+		t.Errorf("exported %d, want 5", got)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := queueLen(t, ch, queue); got != 0 {
+		t.Errorf("queue has %d after ack drain, want 0", got)
+	}
+}
+
+// TestImportRoundTripWithRouting:导出后清空,导入(路由覆盖回同一队列)应恢复条数。
+func TestImportRoundTripWithRouting(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	seed(t, ch, queue, 4)
+
+	// drain 导出(清空队列)
+	dumpBytes := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Ack: true}}, config.Common{})
+	if got := countMessages(t, dumpBytes); got != 4 {
+		t.Fatalf("exported %d, want 4", got)
+	}
+
+	// 导入:路由覆盖到默认 exchange + routing key = 队列名(即回到本队列)
+	importCfg := Config{Import: ImportConfig{Exchange: "", RoutingKey: queue, Confirm: true, Persistent: false}}
+	d := openDriver(t, importCfg, config.Common{Concurrency: 4})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := pipeline.Import(ctx, bytes.NewReader(dumpBytes), "amqp", d); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	// 断言:队列恢复 4 条
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if queueLen(t, ch, queue) >= 4 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := queueLen(t, ch, queue); got != 4 {
+		t.Errorf("queue has %d after import, want 4", got)
+	}
+}

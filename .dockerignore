@@ -1,0 +1,18 @@
+# VCS / worktrees
+.git
+.worktrees
+
+# 文档与计划
+docs
+
+# 本地产物
+bin
+dist
+*.exe
+*.test
+*.out
+coverage.*
+
+# IDE
+.idea
+.vscode

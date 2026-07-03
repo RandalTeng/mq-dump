@@ -1,0 +1,14 @@
+# AMQP 驱动配置。mq-dump export/import --config <this-file>
+connection:
+  # RabbitMQ 连接串
+  uri: amqp://guest:guest@localhost:5672/
+export:
+  queue: orders        # 源队列
+  ack: false           # true = 破坏性 drain(读完即移除);false = 非破坏(requeue)
+  prefetch: 100        # consume 预取量
+import:
+  exchange: ""         # 覆盖目标 exchange;空 = 用消息原始 exchange
+  routing_key: ""      # 覆盖目标 routing key;空 = 用原始 routing key
+  persistent: true     # delivery-mode=2
+  confirm: true        # publisher confirms
+  mandatory: false
