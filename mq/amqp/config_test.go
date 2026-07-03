@@ -36,3 +36,29 @@ func TestTargetPartialOverride(t *testing.T) {
 		t.Errorf("partial = %q/%q, want b/orig", ex, key)
 	}
 }
+
+func TestResolveMode(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    ExportMode
+		wantErr bool
+	}{
+		{"", ModeDrain, false},
+		{"drain", ModeDrain, false},
+		{"requeue", ModeRequeue, false},
+		{"peek", ModePeek, false},
+		{"bogus", "", true},
+	}
+	for _, c := range cases {
+		got, err := resolveMode(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("resolveMode(%q) err=nil, want error", c.in)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("resolveMode(%q) = %q,%v; want %q,nil", c.in, got, err, c.want)
+		}
+	}
+}

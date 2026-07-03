@@ -28,7 +28,8 @@ func uri() string {
 	return "amqp://guest:guest@localhost:5672/"
 }
 
-// setup 建立一条连接与通道,声明一个自动删除的临时队列,返回队列名与清理函数。
+// setup 建立一条连接与通道,声明一个非独占、非自动删除的临时队列(驱动用独立连接消费,
+// 故不能 exclusive;导出后消费者断开仍需存活以便断言条数,故不能 auto-delete),返回队列名。
 func setup(t *testing.T) (*rabbit.Connection, *rabbit.Channel, string) {
 	t.Helper()
 	conn, err := rabbit.Dial(uri())
@@ -39,7 +40,7 @@ func setup(t *testing.T) (*rabbit.Connection, *rabbit.Channel, string) {
 	if err != nil {
 		t.Fatalf("channel: %v", err)
 	}
-	q, err := ch.QueueDeclare("", false, true, true, false, nil)
+	q, err := ch.QueueDeclare("", false, false, false, false, nil)
 	if err != nil {
 		t.Fatalf("declare queue: %v", err)
 	}
@@ -122,36 +123,51 @@ func countMessages(t *testing.T, b []byte) int {
 	}
 }
 
-// TestExportNonDestructive:默认 ack=false,导出后消息仍在队列(requeue)。
-func TestExportNonDestructive(t *testing.T) {
+// TestExportDrain:drain(默认)导出后队列被清空。
+func TestExportDrain(t *testing.T) {
 	conn, ch, queue := setup(t)
 	defer conn.Close()
 	seed(t, ch, queue, 5)
 
-	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue}}, config.Common{})
-	if got := countMessages(t, b); got != 5 {
-		t.Errorf("exported %d msgs, want 5", got)
-	}
-	// 非破坏:队列仍有 5 条
-	time.Sleep(300 * time.Millisecond)
-	if got := queueLen(t, ch, queue); got != 5 {
-		t.Errorf("queue has %d after non-destructive export, want 5", got)
-	}
-}
-
-// TestExportAckDrain:ack=true,导出后队列被清空。
-func TestExportAckDrain(t *testing.T) {
-	conn, ch, queue := setup(t)
-	defer conn.Close()
-	seed(t, ch, queue, 5)
-
-	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Ack: true}}, config.Common{})
+	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Mode: "drain"}}, config.Common{})
 	if got := countMessages(t, b); got != 5 {
 		t.Errorf("exported %d, want 5", got)
 	}
 	time.Sleep(300 * time.Millisecond)
 	if got := queueLen(t, ch, queue); got != 0 {
-		t.Errorf("queue has %d after ack drain, want 0", got)
+		t.Errorf("queue has %d after drain, want 0", got)
+	}
+}
+
+// TestExportRequeue:requeue 非破坏全导,导出后队列条数不变,dump 完整,不死循环。
+func TestExportRequeue(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	seed(t, ch, queue, 5)
+
+	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Mode: "requeue"}}, config.Common{})
+	if got := countMessages(t, b); got != 5 {
+		t.Errorf("exported %d msgs, want 5", got)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := queueLen(t, ch, queue); got != 5 {
+		t.Errorf("queue has %d after requeue export, want 5", got)
+	}
+}
+
+// TestExportPeek:peek 只取队头 N 条,非破坏,队列条数不变。
+func TestExportPeek(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	seed(t, ch, queue, 5)
+
+	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Mode: "peek"}}, config.Common{Count: 3})
+	if got := countMessages(t, b); got != 3 {
+		t.Errorf("peeked %d msgs, want 3", got)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := queueLen(t, ch, queue); got != 5 {
+		t.Errorf("queue has %d after peek, want 5", got)
 	}
 }
 
@@ -162,7 +178,7 @@ func TestImportRoundTripWithRouting(t *testing.T) {
 	seed(t, ch, queue, 4)
 
 	// drain 导出(清空队列)
-	dumpBytes := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Ack: true}}, config.Common{})
+	dumpBytes := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Mode: "drain"}}, config.Common{})
 	if got := countMessages(t, dumpBytes); got != 4 {
 		t.Fatalf("exported %d, want 4", got)
 	}
@@ -199,7 +215,7 @@ func TestSplitRoundTrip(t *testing.T) {
 	// 拆分 drain 导出到 <dir>/dump 基名
 	dir := t.TempDir()
 	stem := filepath.Join(dir, "dump")
-	d := openDriver(t, Config{Export: ExportConfig{Queue: queue, Ack: true}}, config.Common{Timeout: 2 * time.Second})
+	d := openDriver(t, Config{Export: ExportConfig{Queue: queue, Mode: "drain"}}, config.Common{Timeout: 2 * time.Second})
 	w, err := dump.NewSplitWriter(stem, "amqp", k)
 	if err != nil {
 		t.Fatalf("split writer: %v", err)

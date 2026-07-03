@@ -4,8 +4,16 @@ connection:
   uri: amqp://guest:guest@localhost:5672/
 export:
   queue: orders        # 源队列
-  ack: false           # true = 破坏性 drain(读完即移除);false = 非破坏(requeue)
-  prefetch: 100        # consume 预取量
+  # mode: 导出后消息去向
+  #   drain   (默认) 破坏性:读完即从队列移除;天然读空即止。恢复靠随后 import 回灌。
+  #   requeue 非破坏:把每条重发回本队列(默认交换机按【队列名】直投,不经原 exchange、不扇出),
+  #           confirm 成功后再移除原件,整队导出且顺序变为队尾追加。
+  #           注意1:重发利用"默认交换机 + 队列名"特性做重新入队,投递 routing key 会变成队列名
+  #                 (dump 内仍保留原始 routing key,import 可还原)。
+  #           注意2:执行前必须停掉本队列的其他消费者,否则会重复消费并破坏计数。
+  #   peek    非破坏:只取队头 N 条(见 --count),全程挂起、结束整体 requeue,用于抽样/测试。
+  mode: drain
+  prefetch: 100        # consume 预取量;peek 模式下 --count 为 0 时即取此条数
 import:
   exchange: ""         # 覆盖目标 exchange;空 = 用消息原始 exchange
   routing_key: ""      # 覆盖目标 routing key;空 = 用原始 routing key

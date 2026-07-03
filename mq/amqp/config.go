@@ -1,6 +1,8 @@
 package amqp
 
 import (
+	"fmt"
+
 	"github.com/goccy/go-json"
 
 	"github.com/RandalTeng/mq-dump/model"
@@ -18,11 +20,38 @@ type ConnConfig struct {
 	URI string `yaml:"uri"`
 }
 
+// ExportMode 是导出模式(消息读出后的去向语义)。
+type ExportMode string
+
+const (
+	// ModeDrain 破坏性抽干:emit 落盘后 ack,消息被移除;天然读空即止。
+	ModeDrain ExportMode = "drain"
+	// ModeRequeue 非破坏全导:重发副本回原队(默认交换机+队列名)并 confirm 后再 ack 原件;
+	// 须先停该队列其他消费者。投递 routing key 会变为队列名。
+	ModeRequeue ExportMode = "requeue"
+	// ModePeek 非破坏抽样:仅取队头 N 条,全程不 ack/nack,结束一次性 nack requeue。
+	ModePeek ExportMode = "peek"
+)
+
 // ExportConfig 是导出参数。
 type ExportConfig struct {
 	Queue    string `yaml:"queue"`
-	Ack      bool   `yaml:"ack"`
+	Mode     string `yaml:"mode"` // drain(默认) | requeue | peek
 	Prefetch int    `yaml:"prefetch"`
+}
+
+// resolveMode 归一化并校验导出模式;空串视为默认 drain。
+func resolveMode(s string) (ExportMode, error) {
+	switch ExportMode(s) {
+	case "", ModeDrain:
+		return ModeDrain, nil
+	case ModeRequeue:
+		return ModeRequeue, nil
+	case ModePeek:
+		return ModePeek, nil
+	default:
+		return "", fmt.Errorf("amqp: unknown export mode %q (want drain|requeue|peek)", s)
+	}
 }
 
 // ImportConfig 是导入参数(含路由覆盖)。
