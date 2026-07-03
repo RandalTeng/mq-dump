@@ -3,7 +3,7 @@ package pipeline
 
 import (
 	"context"
-	"io"
+	"log/slog"
 	"sync"
 
 	"github.com/RandalTeng/mq-dump/internal/dump"
@@ -11,10 +11,11 @@ import (
 	"github.com/RandalTeng/mq-dump/mq"
 )
 
-// Export 让驱动产出消息,逐条经并发安全 emit 写入 JSONL(带 meta 头);count>0 时到量即止。
-func Export(ctx context.Context, w io.Writer, driver string, count int, d mq.Driver) error {
-	enc := dump.NewEncoder(w, driver)
-	if err := enc.WriteMeta(); err != nil {
+const progressEvery = 10000
+
+// Export 让驱动产出消息,逐条经并发安全 emit 写入 Writer;count>0 时到量即止。
+func Export(ctx context.Context, w dump.Writer, count int, d mq.Driver) error {
+	if err := w.WriteMeta(); err != nil {
 		return err
 	}
 	var mu sync.Mutex
@@ -28,22 +29,28 @@ func Export(ctx context.Context, w io.Writer, driver string, count int, d mq.Dri
 			cancel()
 			return nil
 		}
-		if err := enc.Write(m); err != nil {
+		if err := w.Write(m); err != nil {
 			return err
 		}
 		n++
+		if n%progressEvery == 0 {
+			slog.Info("export progress", "done", n)
+		}
 		if count > 0 && n >= count {
 			cancel()
 		}
 		return nil
 	}
-	return d.Export(ctx, emit)
+	if err := d.Export(ctx, emit); err != nil {
+		return err
+	}
+	slog.Info("export done", "total", n)
+	return nil
 }
 
-// Import 从 JSONL 读取(校验 meta.driver),经并发安全 next 交给驱动 publish。
-func Import(ctx context.Context, r io.Reader, driver string, d mq.Driver) error {
-	dec := dump.NewDecoder(r)
-	meta, err := dec.ReadMeta()
+// Import 从 Reader 读取(校验 meta.driver),经并发安全 next 交给驱动 publish。
+func Import(ctx context.Context, r dump.Reader, driver string, d mq.Driver) error {
+	meta, err := r.Meta()
 	if err != nil {
 		return err
 	}
@@ -51,10 +58,22 @@ func Import(ctx context.Context, r io.Reader, driver string, d mq.Driver) error 
 		return err
 	}
 	var mu sync.Mutex
+	var n int
 	next := func() (model.Message, bool, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		return dec.Read()
+		m, ok, err := r.Read()
+		if ok {
+			n++
+			if n%progressEvery == 0 {
+				slog.Info("import progress", "done", n)
+			}
+		}
+		return m, ok, err
 	}
-	return d.Import(ctx, next)
+	if err := d.Import(ctx, next); err != nil {
+		return err
+	}
+	slog.Info("import done", "total", n)
+	return nil
 }

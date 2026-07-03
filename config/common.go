@@ -14,6 +14,9 @@ type Common struct {
 	Count       int           `short:"n" help:"导出条数上限;0 = 不限"`
 	Timeout     time.Duration `short:"t" help:"导出空闲超时"`
 	Concurrency int           `short:"j" default:"1" help:"导入 worker 数;0 = CPU 核心数"`
+	SplitCount  int           `help:"导出按消息条数拆分;每 N 条一个文件;0=不拆"`
+	LogLevel    string        `default:"info" help:"日志级别 debug|info|warn|error"`
+	LogFile     string        `default:"mq-dump.log" help:"日志文件路径;\"-\"=stderr"`
 }
 
 // Workers 解析并发度:0 → NumCPU;<1 → 1;否则原值。

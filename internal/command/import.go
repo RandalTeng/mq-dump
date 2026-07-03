@@ -7,6 +7,7 @@ import (
 	"os/signal"
 
 	"github.com/RandalTeng/mq-dump/config"
+	"github.com/RandalTeng/mq-dump/internal/dump"
 	"github.com/RandalTeng/mq-dump/internal/pipeline"
 	"github.com/RandalTeng/mq-dump/mq"
 )
@@ -16,6 +17,12 @@ type ImportCmd struct{}
 
 // Run 执行导入。
 func (c *ImportCmd) Run(common *config.Common) error {
+	closer, err := setupLogger(common.LogLevel, common.LogFile)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
 	f, ok := mq.Get(common.Driver)
 	if !ok {
 		return fmt.Errorf("unknown driver %q", common.Driver)
@@ -30,7 +37,7 @@ func (c *ImportCmd) Run(common *config.Common) error {
 	}
 	defer d.Close()
 
-	r, err := openDumpReader(common.DumpFile)
+	r, err := dump.OpenReader(common.DumpFile)
 	if err != nil {
 		return err
 	}

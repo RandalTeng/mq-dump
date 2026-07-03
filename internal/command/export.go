@@ -16,6 +16,12 @@ type ExportCmd struct{}
 
 // Run 执行导出。
 func (c *ExportCmd) Run(common *config.Common) error {
+	closer, err := setupLogger(common.LogLevel, common.LogFile)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
 	f, ok := mq.Get(common.Driver)
 	if !ok {
 		return fmt.Errorf("unknown driver %q", common.Driver)
@@ -30,7 +36,8 @@ func (c *ExportCmd) Run(common *config.Common) error {
 	}
 	defer d.Close()
 
-	w, err := openDumpWriter(common.DumpFile)
+	namer, _ := d.(mq.Namer)
+	w, err := resolveExportWriter(common, common.Driver, namer)
 	if err != nil {
 		return err
 	}
@@ -38,5 +45,5 @@ func (c *ExportCmd) Run(common *config.Common) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	return pipeline.Export(ctx, w, common.Driver, common.Count, d)
+	return pipeline.Export(ctx, w, common.Count, d)
 }

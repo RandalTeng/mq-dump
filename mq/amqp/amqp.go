@@ -4,6 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"log/slog"
+	"net/url"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -35,6 +37,7 @@ func (factory) Open(c config.Common, cfg any) (mq.Driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("amqp dial: %w", err)
 	}
+	slog.Info("amqp connected", "addr", sanitizeURI(ac.Connection.URI))
 	return &Driver{conn: conn, cfg: *ac, common: c}, nil
 }
 
@@ -52,6 +55,9 @@ func (d *Driver) Close() error {
 	}
 	return nil
 }
+
+// DumpName 实现 mq.Namer:无 -f 时默认 dump 基名 = 导出队列名。
+func (d *Driver) DumpName() string { return d.cfg.Export.Queue }
 
 // Export 从队列 consume,逐条 emit;emit 成功后按配置 ack/nack。
 func (d *Driver) Export(ctx context.Context, emit func(model.Message) error) error {
@@ -71,6 +77,7 @@ func (d *Driver) Export(ctx context.Context, emit func(model.Message) error) err
 	if err != nil {
 		return fmt.Errorf("consume %q: %w", d.cfg.Export.Queue, err)
 	}
+	slog.Info("amqp export start", "queue", d.cfg.Export.Queue, "prefetch", prefetch, "ack", d.cfg.Export.Ack)
 	idle := d.common.Timeout
 	var count int
 	for {
@@ -160,4 +167,13 @@ func (d *Driver) publish(ctx context.Context, ch *amqp.Channel, m model.Message)
 		}
 	}
 	return nil
+}
+
+// sanitizeURI 仅保留 host:port,剥除账号口令,避免日志泄露凭据。
+func sanitizeURI(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return "?"
+	}
+	return u.Host
 }

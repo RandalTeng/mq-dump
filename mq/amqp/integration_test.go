@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -93,9 +94,10 @@ func exportToBuf(t *testing.T, cfg Config, common config.Common) []byte {
 	}
 	d := openDriver(t, cfg, common)
 	var buf bytes.Buffer
+	w := dump.NewSingleWriter(&buf, "amqp")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := pipeline.Export(ctx, &buf, "amqp", common.Count, d); err != nil {
+	if err := pipeline.Export(ctx, w, common.Count, d); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 	return buf.Bytes()
@@ -170,7 +172,7 @@ func TestImportRoundTripWithRouting(t *testing.T) {
 	d := openDriver(t, importCfg, config.Common{Concurrency: 4})
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := pipeline.Import(ctx, bytes.NewReader(dumpBytes), "amqp", d); err != nil {
+	if err := pipeline.Import(ctx, dump.NewSingleReaderForTest(bytes.NewReader(dumpBytes)), "amqp", d); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 
@@ -184,5 +186,67 @@ func TestImportRoundTripWithRouting(t *testing.T) {
 	}
 	if got := queueLen(t, ch, queue); got != 4 {
 		t.Errorf("queue has %d after import, want 4", got)
+	}
+}
+
+// TestSplitRoundTrip:拆分导出到临时目录(--split-count),再从清单聚合导入回同一队列。
+func TestSplitRoundTrip(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	const n, k = 5, 2 // 5 条按每片 2 → 3 分片(2/2/1)
+	seed(t, ch, queue, n)
+
+	// 拆分 drain 导出到 <dir>/dump 基名
+	dir := t.TempDir()
+	stem := filepath.Join(dir, "dump")
+	d := openDriver(t, Config{Export: ExportConfig{Queue: queue, Ack: true}}, config.Common{Timeout: 2 * time.Second})
+	w, err := dump.NewSplitWriter(stem, "amqp", k)
+	if err != nil {
+		t.Fatalf("split writer: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := pipeline.Export(ctx, w, 0, d); err != nil {
+		t.Fatalf("split export: %v", err)
+	}
+
+	// 校验清单分片数
+	mf, err := os.Open(stem + ".mqdump.json")
+	if err != nil {
+		t.Fatalf("open manifest: %v", err)
+	}
+	man, err := dump.ReadManifest(mf)
+	mf.Close()
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if man.Total != n || len(man.Parts) != 3 {
+		t.Fatalf("manifest total=%d parts=%d, want %d/3", man.Total, len(man.Parts), n)
+	}
+
+	// 从清单聚合导入,路由回同一队列
+	r, err := dump.OpenReader(stem + ".mqdump.json")
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer r.Close()
+	importCfg := Config{Import: ImportConfig{RoutingKey: queue, Confirm: true}}
+	id := openDriver(t, importCfg, config.Common{Concurrency: 4})
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel2()
+	if err := pipeline.Import(ctx2, r, "amqp", id); err != nil {
+		t.Fatalf("split import: %v", err)
+	}
+
+	// 断言:队列恢复 n 条
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if queueLen(t, ch, queue) >= n {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := queueLen(t, ch, queue); got != n {
+		t.Errorf("queue has %d after split import, want %d", got, n)
 	}
 }

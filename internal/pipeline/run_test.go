@@ -37,12 +37,13 @@ func (f *fakeDriver) Close() error { return nil }
 func TestExportThenImportRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	src := &fakeDriver{out: []model.Message{{Body: []byte("m1")}, {Body: []byte("m2")}}}
-	if err := Export(context.Background(), &buf, "amqp", 0, src); err != nil {
+	w := dump.NewSingleWriter(&buf, "amqp")
+	if err := Export(context.Background(), w, 0, src); err != nil {
 		t.Fatal(err)
 	}
-
 	dst := &fakeDriver{}
-	if err := Import(context.Background(), bytes.NewReader(buf.Bytes()), "amqp", dst); err != nil {
+	r := dump.NewSingleReaderForTest(bytes.NewReader(buf.Bytes()))
+	if err := Import(context.Background(), r, "amqp", dst); err != nil {
 		t.Fatal(err)
 	}
 	if len(dst.in) != 2 || string(dst.in[0].Body) != "m1" {
@@ -53,15 +54,15 @@ func TestExportThenImportRoundTrip(t *testing.T) {
 func TestExportCountLimit(t *testing.T) {
 	var buf bytes.Buffer
 	src := &fakeDriver{out: []model.Message{{Body: []byte("1")}, {Body: []byte("2")}, {Body: []byte("3")}}}
-	if err := Export(context.Background(), &buf, "amqp", 2, src); err != nil {
+	w := dump.NewSingleWriter(&buf, "amqp")
+	if err := Export(context.Background(), w, 2, src); err != nil {
 		t.Fatal(err)
 	}
 	dec := dump.NewDecoder(bytes.NewReader(buf.Bytes()))
 	_, _ = dec.ReadMeta()
 	var n int
 	for {
-		_, ok, _ := dec.Read()
-		if !ok {
+		if _, ok, _ := dec.Read(); !ok {
 			break
 		}
 		n++
@@ -73,8 +74,10 @@ func TestExportCountLimit(t *testing.T) {
 
 func TestImportDriverMismatch(t *testing.T) {
 	var buf bytes.Buffer
-	_ = Export(context.Background(), &buf, "amqp", 0, &fakeDriver{})
-	if err := Import(context.Background(), bytes.NewReader(buf.Bytes()), "kafka", &fakeDriver{}); err == nil {
+	w := dump.NewSingleWriter(&buf, "amqp")
+	_ = Export(context.Background(), w, 0, &fakeDriver{})
+	r := dump.NewSingleReaderForTest(bytes.NewReader(buf.Bytes()))
+	if err := Import(context.Background(), r, "kafka", &fakeDriver{}); err == nil {
 		t.Error("driver mismatch should error")
 	}
 }

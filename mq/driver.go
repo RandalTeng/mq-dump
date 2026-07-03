@@ -24,3 +24,9 @@ type Factory interface {
 	ConfigTemplate() string
 	Open(c config.Common, cfg any) (Driver, error)
 }
+
+// Namer 由驱动可选实现,给出无 -f 时的默认 dump 基名(不含扩展名)。
+// 通用层类型断言使用;外部驱动可不实现。
+type Namer interface {
+	DumpName() string
+}

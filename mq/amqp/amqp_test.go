@@ -24,3 +24,17 @@ func TestConfigTemplateParsesBack(t *testing.T) {
 		t.Error("template should include a connection.uri example")
 	}
 }
+
+func TestDriverDumpName(t *testing.T) {
+	d := &Driver{cfg: Config{Export: ExportConfig{Queue: "orders"}}}
+	if d.DumpName() != "orders" {
+		t.Errorf("DumpName = %q, want orders", d.DumpName())
+	}
+}
+
+func TestSanitizeURIStripsCredentials(t *testing.T) {
+	got := sanitizeURI("amqp://guest:secret@localhost:5672/vh")
+	if got != "localhost:5672" {
+		t.Errorf("sanitizeURI = %q, want localhost:5672", got)
+	}
+}
