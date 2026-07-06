@@ -43,11 +43,12 @@ func (s *singleWriter) Close() error {
 	return nil
 }
 
-// splitWriter 按条数轮转纯数据分片,并维护独立清单。
+// splitWriter 按条数轮转分片(每片为独立 v1 单文件),并维护独立清单。
 type splitWriter struct {
-	stem   string // 基路径(不含扩展名),如 /out/orders
-	driver string
-	limit  int // 每分片条数上限(>0)
+	stem      string // 基路径(不含扩展名),如 /out/orders
+	driver    string
+	limit     int    // 每分片条数上限(>0)
+	createdAt string // 导出起始时刻;仅用于清单 created_at(分片各自用写入当时时间)
 
 	cur     *os.File
 	curEnc  *Encoder
@@ -59,7 +60,12 @@ type splitWriter struct {
 
 // NewSplitWriter 创建按 limit 条轮转的拆分 Writer;stem 为基路径(不含扩展名)。
 func NewSplitWriter(stem, driver string, limit int) (*splitWriter, error) {
-	sw := &splitWriter{stem: stem, driver: driver, limit: limit}
+	sw := &splitWriter{
+		stem:      stem,
+		driver:    driver,
+		limit:     limit,
+		createdAt: time.Now().UTC().Format(time.RFC3339),
+	}
 	if err := sw.rotate(); err != nil {
 		return nil, err
 	}
@@ -93,7 +99,7 @@ func (s *splitWriter) Close() error {
 	return s.writeManifest()
 }
 
-// rotate 打开下一个分片文件(纯数据,无 meta 头)。
+// rotate 打开下一个分片文件并写入 meta 头(导出当时时间);分片即独立 v1 单文件。
 func (s *splitWriter) rotate() error {
 	name := fmt.Sprintf("%s-%03d.jsonl", filepath.Base(s.stem), len(s.parts))
 	full := filepath.Join(filepath.Dir(s.stem), name)
@@ -101,7 +107,12 @@ func (s *splitWriter) rotate() error {
 	if err != nil {
 		return fmt.Errorf("create part %q: %w", full, err)
 	}
-	s.cur, s.curEnc, s.curN, s.curFile = f, NewEncoder(f, s.driver), 0, name
+	enc := NewEncoder(f, s.driver)
+	if err := enc.WriteMeta(); err != nil {
+		f.Close()
+		return fmt.Errorf("write part meta %q: %w", full, err)
+	}
+	s.cur, s.curEnc, s.curN, s.curFile = f, enc, 0, name
 	return nil
 }
 
@@ -127,7 +138,8 @@ func (s *splitWriter) writeManifest() error {
 	man := Manifest{
 		FormatVersion: FormatVersion,
 		Driver:        s.driver,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:     s.createdAt,
+		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		Parts:         s.parts,
 		Total:         s.total,
 	}

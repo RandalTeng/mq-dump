@@ -64,9 +64,15 @@ func TestSplitWriterRotatesAndManifests(t *testing.T) {
 	if m.Parts[0].File != "orders-000.jsonl" {
 		t.Errorf("part file = %q, want orders-000.jsonl", m.Parts[0].File)
 	}
-	// 分片为纯数据:首行即消息,无 meta。
+	// 分片为独立 v1 单文件:首行即 meta 头。
 	b, _ := os.ReadFile(filepath.Join(dir, m.Parts[0].File))
-	if bytes.Contains(b, []byte("format_version")) {
-		t.Errorf("part must not carry meta:\n%s", b)
+	if !bytes.Contains(b, []byte(`"format_version"`)) {
+		t.Errorf("part must carry meta header:\n%s", b)
+	}
+	if !bytes.Contains(b, []byte(`"driver":"amqp"`)) {
+		t.Errorf("part meta must carry driver:\n%s", b)
+	}
+	if m.UpdatedAt == "" {
+		t.Errorf("manifest updated_at must be set: %+v", m)
 	}
 }

@@ -9,14 +9,14 @@
 
 1. **日志记录**:引入 `log/slog` 结构化日志,**默认写文件**(`mq-dump.log`),`--log-file` 改路径 / `-` 转 stderr;`--log-level` 控级别。stdout 专用于 dump 数据(`-f -`),stderr 专用于致命错误——日志默认不占二者。
 2. **默认输出文件名**:导出不带 `-f` 时,默认写 `<队列名>.jsonl`;显式 `-f -` 才写 stdout。
-3. **大文件拆分**:导出按消息条数拆分(`--split-count N`),生成独立**清单文件**索引各纯数据分片;导入按清单聚合读取。
+3. **大文件拆分**:导出按消息条数拆分(`--split-count N`),生成独立**清单文件**索引各内嵌 meta 的独立分片(每分片即 v1 单文件);导入按清单聚合读取。
 
 ## 核心设计原则(延续 v1)
 
 1. **不破坏公共接口**:新能力经**可选接口**(`mq.Namer`)与**默认 logger**(`slog.SetDefault`)接入;外部驱动无需改动即可编译,按需选择实现。
 2. **通用层不知驱动私有**:队列名归 AMQP 私有配置;通用层经 `mq.Namer` 拿到"建议名",不感知语义。
 3. **拆分/清单归 dump 层**:新增 `dump.Writer`/`dump.Reader` 抽象,管道只调 `Write`/`Read`,不掺文件轮转。
-4. **向后兼容 dump 格式**:不拆分时单文件内嵌 meta(v1 格式原样);仅拆分时才出清单 + 纯数据分片。
+4. **向后兼容 dump 格式**:不拆分时单文件内嵌 meta(v1 格式原样);拆分时出清单 + 独立 v1 单文件分片。
 
 ## 决策记录
 
@@ -28,7 +28,7 @@
 | 队列名获取 | 可选接口 `mq.Namer` | 非破坏;外部驱动 opt-in,类比 `io.WriterTo` |
 | 无 `-f` 默认 | `<队列名>.jsonl` | 直接满足诉求;显式 `-f -` 保留 stdout |
 | 拆分触发 | 消息条数 `--split-count N`,默认 0=关 | 用户选定;实现直观 |
-| 拆分索引 | 独立清单 `.mqdump.json`(单行 JSON)+ 纯数据分片 | meta 只存一份;分片无冗余头;可单独校验 |
+| 拆分索引 | 独立清单 `.mqdump.json`(单行 JSON)+ 内嵌 meta 的独立分片 | 分片可单独校验/导入;清单额外持 created_at/updated_at |
 | 导入模式判定 | **按内容**:首行含 `parts` → 清单模式,否则单文件 | 不依赖扩展名/额外配置;清单自描述 |
 | 不拆分格式 | 单文件内嵌 meta(v1 不变) | 向后兼容;常见情况零额外文件 |
 | 轮转逻辑位置 | `dump.Writer` 接口(single/split 两实现) | 管道保持编排职责单一 |
@@ -122,7 +122,7 @@ type Writer interface {
 - **split**(`SplitCount>0`):
   - 基名派生:`-f <path>` 去掉尾部 `.jsonl` 扩展名即为基名(如 `-f orders.jsonl`→基名 `orders`);`-f` 空则基名 = `Namer.DumpName()`。
   - 分片名 `<基名>-000.jsonl`、`<基名>-001.jsonl` …(三位零填充,超 999 自然进位到四位)。
-  - 分片为**纯数据**(无 meta 头);每写满 N 条 rotate 到下一分片。
+  - 分片为**独立 v1 单文件**:首行内嵌 meta 头(时间为写入分片当时;`format_version`/`driver` 同清单),其后逐条消息;每写满 N 条 rotate 到下一分片。单个分片可脱离清单直接 `-f <分片>` 导入。
   - 清单 `<基名>.mqdump.json`:**每完成一个分片后重写一次**,收尾再写一次终态。崩溃时清单覆盖所有**已完成**分片,进行中分片不在列——可安全重导已完成部分。
   - `-f -`(stdout)+ `SplitCount>0` → 报错:`拆分导出不支持写 stdout`。
 
@@ -133,6 +133,7 @@ type Writer interface {
   "format_version": 1,
   "driver": "amqp",
   "created_at": "2026-07-03T00:00:00Z",
+  "updated_at": "2026-07-03T00:05:00Z",
   "parts": [
     {"file": "orders-000.jsonl", "count": 100000},
     {"file": "orders-001.jsonl", "count": 45000}
@@ -140,6 +141,8 @@ type Writer interface {
   "total": 145000
 }
 ```
+
+`created_at` 为导出起始时刻;`updated_at` 每次清单落地(逐分片崩溃安全重写与收尾)刷新为当时时间。`format_version` 不因分片内嵌 meta 而升(分片结构恰为 v1 单文件)。
 
 `file` 相对清单所在目录(整套可迁移)。`format_version` 复用 `dump.FormatVersion`。上例为便于阅读做了缩进,**磁盘上清单为单行紧凑 JSON**——与单文件首行 meta 同为"首行即头",便于统一按首行判定模式。
 
@@ -156,7 +159,7 @@ type Reader interface {
 
 导入侧**按内容自动判定**模式(不依赖扩展名,command 层无需任何额外清单配置):读 `-f` 目标首行 JSON,
 
-- 首行含 `parts` 字段 → **manifest reader**:该文件即清单,取 driver/parts,按 `file` 相对清单目录按序打开各分片纯数据流拼接;`Meta()` 由清单头(format_version/driver/created_at)构造。
+- 首行含 `parts` 字段 → **manifest reader**:该文件即清单,取 driver/parts,按 `file` 相对清单目录按序打开各分片(每片内嵌 meta 头,消费首行并校验 driver 后)拼接;`Meta()` 由清单头(format_version/driver/created_at)构造。
 - 首行含 `format_version` 但无 `parts`(单文件内嵌 meta)→ **single reader**:现有行为,首行 meta + 逐条。含 `-f -` stdin、`-f X.jsonl`。
 
 > 因此重新导入**无需定义任何"清单 meta"配置项**:清单文件自描述(driver 从清单读、分片路径从 `parts` 读),`-f` 指向清单文件即可。约定扩展名 `.mqdump.json` 仅为默认导出命名,不参与判定。

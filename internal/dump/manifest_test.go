@@ -10,6 +10,7 @@ func TestManifestRoundTrip(t *testing.T) {
 		FormatVersion: FormatVersion,
 		Driver:        "amqp",
 		CreatedAt:     "2026-07-03T00:00:00Z",
+		UpdatedAt:     "2026-07-03T00:05:00Z",
 		Parts:         []Part{{File: "orders-000.jsonl", Count: 3}, {File: "orders-001.jsonl", Count: 2}},
 		Total:         5,
 	}
@@ -26,5 +27,8 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 	if got.Total != 5 || len(got.Parts) != 2 || got.Parts[1].File != "orders-001.jsonl" {
 		t.Errorf("round-trip mismatch: %+v", got)
+	}
+	if got.CreatedAt != "2026-07-03T00:00:00Z" || got.UpdatedAt != "2026-07-03T00:05:00Z" {
+		t.Errorf("timestamps round-trip mismatch: created=%q updated=%q", got.CreatedAt, got.UpdatedAt)
 	}
 }

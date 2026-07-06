@@ -18,8 +18,10 @@ type Manifest struct {
 	FormatVersion int    `json:"format_version"`
 	Driver        string `json:"driver"`
 	CreatedAt     string `json:"created_at"`
-	Parts         []Part `json:"parts"`
-	Total         int    `json:"total"`
+	// UpdatedAt 每次清单落地刷新为当时时间(逐分片崩溃安全重写与收尾)。
+	UpdatedAt string `json:"updated_at"`
+	Parts     []Part `json:"parts"`
+	Total     int    `json:"total"`
 }
 
 // WriteManifest 把清单写为单行 JSON(带结尾换行)。

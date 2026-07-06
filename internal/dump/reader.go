@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/goccy/go-json"
 
@@ -86,7 +87,7 @@ func (s *singleReader) Close() error {
 	return nil
 }
 
-// manifestReader 顺序拼接清单里的纯数据分片。
+// manifestReader 顺序拼接清单里的分片(每片内嵌 meta 头,聚合时跳过并校验)。
 type manifestReader struct {
 	man    Manifest
 	dir    string
@@ -119,12 +120,25 @@ func (m *manifestReader) Read() (model.Message, bool, error) {
 			if m.idx >= len(m.man.Parts) {
 				return model.Message{}, false, nil
 			}
-			p := filepath.Join(m.dir, m.man.Parts[m.idx].File)
+			p, err := resolvePart(m.dir, m.man.Parts[m.idx].File)
+			if err != nil {
+				return model.Message{}, false, err
+			}
 			f, err := os.Open(p)
 			if err != nil {
 				return model.Message{}, false, fmt.Errorf("open part %q: %w", p, err)
 			}
-			m.cur, m.curDec, m.idx = f, NewDecoder(f), m.idx+1
+			dec := NewDecoder(f)
+			meta, err := dec.ReadMeta() // 分片内嵌 meta:消费首行并校验驱动
+			if err != nil {
+				f.Close()
+				return model.Message{}, false, fmt.Errorf("part %q meta: %w", p, err)
+			}
+			if meta.Driver != m.man.Driver {
+				f.Close()
+				return model.Message{}, false, fmt.Errorf("part %q driver %q != manifest %q", p, meta.Driver, m.man.Driver)
+			}
+			m.cur, m.curDec, m.idx = f, dec, m.idx+1
 		}
 		msg, ok, err := m.curDec.Read()
 		if err != nil {
@@ -144,4 +158,18 @@ func (m *manifestReader) Close() error {
 		return m.cur.Close()
 	}
 	return nil
+}
+
+// resolvePart 把清单里的分片相对路径按清单所在目录 dir 解析为可打开的路径,
+// 并强制其落在 dir 之内:拒绝绝对路径与经 .. 逃出 dir 的路径(清单为不可信输入)。
+func resolvePart(dir, file string) (string, error) {
+	if filepath.IsAbs(file) {
+		return "", fmt.Errorf("part path %q must be relative to manifest dir", file)
+	}
+	joined := filepath.Join(dir, file)
+	rel, err := filepath.Rel(dir, joined)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("part path %q escapes manifest dir %q", file, dir)
+	}
+	return joined, nil
 }
