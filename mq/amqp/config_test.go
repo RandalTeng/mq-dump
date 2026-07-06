@@ -37,6 +37,15 @@ func TestTargetPartialOverride(t *testing.T) {
 	}
 }
 
+func TestTargetDirectQueue(t *testing.T) {
+	// 空 exchange + 非空 routing_key:忽略原始 exchange,走默认交换机直投队列。
+	d := &Driver{cfg: Config{Import: ImportConfig{RoutingKey: "orders"}}}
+	ex, key := d.target(msgWithRoute("amq.topic", "orig.key"))
+	if ex != "" || key != "orders" {
+		t.Errorf("direct-queue = %q/%q, want \"\"/orders", ex, key)
+	}
+}
+
 func TestResolveMode(t *testing.T) {
 	cases := []struct {
 		in      string

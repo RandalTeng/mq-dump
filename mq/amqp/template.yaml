@@ -16,6 +16,8 @@ export:
   prefetch: 100        # consume 预取量;peek 模式下 --count 为 0 时即取此条数
 import:
   exchange: ""         # 覆盖目标 exchange;空 = 用消息原始 exchange
+                       #   特例:exchange 空且 routing_key 非空 → 走默认交换机直投,
+                       #   routing_key 视为目标队列名(不经原 exchange、不扇出)
   routing_key: ""      # 覆盖目标 routing key;空 = 用原始 routing key
   persistent: true     # delivery-mode=2
   confirm: true        # publisher confirms

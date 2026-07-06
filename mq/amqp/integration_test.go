@@ -284,3 +284,70 @@ func TestSplitRoundTrip(t *testing.T) {
 		t.Errorf("queue has %d after split import, want %d", got, n)
 	}
 }
+
+// TestImportDirectQueue:消息源自一个非默认 direct exchange(导入前已解绑使原始 exchange 路由失效),
+// 空 exchange + routing_key=队列名导入,唯有"默认交换机直投"新语义能恢复条数,故本用例真正区分新旧行为。
+func TestImportDirectQueue(t *testing.T) {
+	conn, ch, queue := setup(t)
+	defer conn.Close()
+	const n = 5
+
+	// 声明一个唯一的自定义 direct exchange,并把队列以 routing key=queue 绑定其上。
+	ex := "mqdump.test." + queue
+	if err := ch.ExchangeDeclare(ex, "direct", false, true, false, false, nil); err != nil {
+		t.Fatalf("declare exchange: %v", err)
+	}
+	t.Cleanup(func() { _ = ch.ExchangeDelete(ex, false, false) })
+	if err := ch.QueueBind(queue, queue, ex, false, nil); err != nil {
+		t.Fatalf("bind queue: %v", err)
+	}
+
+	// 经自定义 exchange ex 发布 n 条(不走共享 seed 助手),使 dump 里每条 Properties.Exchange==ex(非空)。
+	for i := 0; i < n; i++ {
+		err := ch.PublishWithContext(context.Background(), ex, queue, false, false,
+			rabbit.Publishing{ContentType: "text/plain", Body: []byte{byte('A' + i)}})
+		if err != nil {
+			t.Fatalf("publish %d via %s: %v", i, ex, err)
+		}
+	}
+	seedDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(seedDeadline) {
+		if queueLen(t, ch, queue) >= n {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// drain 导出到内存 buf,清空队列;dump 内每条原始 exchange 均为 ex。
+	b := exportToBuf(t, Config{Export: ExportConfig{Queue: queue, Mode: "drain"}}, config.Common{Timeout: 2 * time.Second})
+	if got := countMessages(t, b); got != n {
+		t.Fatalf("dump has %d msgs, want %d", got, n)
+	}
+
+	// 关键:导出后解绑,让"原始 exchange 路由"失效。若 target 回退到原始 exchange(旧/错误实现),
+	// 消息将投到 ex 但无绑定被丢弃,队列不恢复;唯有新代码强制走默认交换机 "" 直投才能恢复。
+	if err := ch.QueueUnbind(queue, queue, ex, nil); err != nil {
+		t.Fatalf("unbind queue: %v", err)
+	}
+
+	// 空 exchange + routing_key=队列名:走默认交换机直投该队列。
+	importCfg := Config{Import: ImportConfig{Exchange: "", RoutingKey: queue, Confirm: true}}
+	id := openDriver(t, importCfg, config.Common{Concurrency: 4})
+	r := dump.NewSingleReaderForTest(bytes.NewReader(b))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := pipeline.Import(ctx, r, "amqp", id); err != nil {
+		t.Fatalf("direct-queue import: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if queueLen(t, ch, queue) >= n {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := queueLen(t, ch, queue); got != n {
+		t.Errorf("queue has %d after direct-queue import, want %d", got, n)
+	}
+}

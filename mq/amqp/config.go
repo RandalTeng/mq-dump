@@ -63,15 +63,23 @@ type ImportConfig struct {
 	Mandatory  bool   `yaml:"mandatory"`
 }
 
-// target 决定导入目标:import 配置非空则覆盖,否则用消息原始路由。
+// target 决定导入目标(按优先级互斥判定):
+//   - Import.Exchange 非空 → 覆盖 exchange;且 Import.RoutingKey 非空时一并覆盖 key(否则保留原始 key);
+//   - 否则 Import.RoutingKey 非空 → 走默认交换机 "" 直投队列(routing key=队列名),忽略消息原始 exchange(与 export requeue 同机制);
+//   - 否则(两者皆空)→ 用消息原始路由。
 func (d *Driver) target(m model.Message) (exchange, key string) {
 	var p Properties
 	_ = json.Unmarshal(m.Properties, &p)
 	exchange, key = p.Exchange, p.RoutingKey
-	if d.cfg.Import.Exchange != "" {
+	switch {
+	case d.cfg.Import.Exchange != "":
 		exchange = d.cfg.Import.Exchange
-	}
-	if d.cfg.Import.RoutingKey != "" {
+		if d.cfg.Import.RoutingKey != "" {
+			key = d.cfg.Import.RoutingKey
+		}
+	case d.cfg.Import.RoutingKey != "":
+		// 默认交换机直投:队列名即 routing key。
+		exchange = ""
 		key = d.cfg.Import.RoutingKey
 	}
 	return
