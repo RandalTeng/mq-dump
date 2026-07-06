@@ -43,13 +43,13 @@ Co-Authored-By: OMP / claude-opus-4-8 <noreply@claude.ai>
 ### Feature Work Isolation (MUST)
 
 New features / functionality are implemented in a **git worktree branched off
-`master`**, never directly in the main working tree — existing code stays
+`main`**, never directly in the main working tree — existing code stays
 untouched.
 
-1. Branch from `master`; create the worktree under `.worktrees/<branch>` (already
+1. Branch from `main`; create the worktree under `.worktrees/<branch>` (already
    gitignored).
    ```bash
-   git worktree add .worktrees/<feature> -b <feature> master
+   git worktree add .worktrees/<feature> -b <feature> main
    ```
 2. Implement, test, and iterate inside the worktree.
 3. Integrate back only after the developer confirms (merge/PR per the confirmation
